@@ -1,6 +1,7 @@
 package generator
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/aquasecurity/trivy/pkg/licensing/expression"
@@ -37,6 +38,15 @@ func resolveExpression(item LicenseChoice, licenseMap map[string]string) []strin
 
 		return ""
 	}))
+	if expr == "" {
+		return nil
+	}
+
+	// cyclonedx-py emits PyPI Trove classifiers (e.g. "License :: OSI Approved ::
+	// Apache Software License") verbatim. Strip the classifier prefix so the
+	// remaining human name can be resolved through licenseMap or SPDX instead of
+	// degenerating into an opaque LicenseRef-License-OSI-Approved-* identifier.
+	expr = stripTrovePrefix(expr)
 	if expr == "" {
 		return nil
 	}
@@ -147,4 +157,37 @@ func firstNonEmpty(a string, b func() string) string {
 	}
 
 	return b()
+}
+
+// stripTrovePrefix removes a PyPI Trove classifier prefix
+// (https://pypi.org/classifiers/) from s, returning the trailing
+// human-readable license name (e.g. "Apache Software License"). It is a no-op
+// when no known prefix is present.
+//
+// "Bare" meta-classifiers such as "License :: OSI Approved" (without a
+// specific license after) carry no attribution value on their own and are
+// reduced to the empty string so the caller can skip them.
+func stripTrovePrefix(s string) string {
+	bareMetaClassifiers := []string{
+		"License :: OSI Approved",
+		"License :: DFSG approved",
+	}
+
+	if slices.Contains(bareMetaClassifiers, s) {
+		return ""
+	}
+
+	prefixes := []string{
+		"License :: OSI Approved :: ",
+		"License :: DFSG approved :: ",
+		"License :: ",
+	}
+
+	for _, prefix := range prefixes {
+		if rest, ok := strings.CutPrefix(s, prefix); ok {
+			return strings.TrimSpace(rest)
+		}
+	}
+
+	return s
 }
